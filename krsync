@@ -18,6 +18,8 @@ parser.add_argument('--rsyncopts', dest='rsyncopts',
 parser.set_defaults(rsyncopts="")
 parser.add_argument('--force', dest='force', action='store_true',
                     help="overwrite an existing /etc/rsyncd.conf")
+parser.add_argument('--context', dest='context',
+                    help="Set kubectl context")
 parser.set_defaults(force=False)
 parser.add_argument('--host', dest='source_host',
                     help="specifies a remote host for all source files")
@@ -39,11 +41,21 @@ def shell(cmd, sh=True):
         return subprocess.check_output("sh -c '" + cmd + "'", shell=True)
     return subprocess.check_output(shlex.split(cmd))
 
+
+def unpiped_shell(cmd, sh=True):
+    debug("Command: " + cmd)
+    if sh:
+        cmd = "sh -c '" + cmd + "'"
+    else:
+        cmd = shlex.split(cmd)
+    process = subprocess.Popen(cmd, shell=sh)
+    process.wait()
+
 # sets up rsync by copying a hard coded /etc/rsyncd.conf to the pod
 
 
 def setup_remote(pod):
-    RSYNCD_CONF = """
+    RSYNCD_CONF = b"""
 lock file = /var/run/rsync.lock
 log file = /var/log/rsyncd.log
 pid file = /var/run/rsyncd.pid
@@ -75,11 +87,6 @@ pid file = /var/run/rsyncd.pid
     return True
 
 
-def cleanup_remote(pod):
-    debug("deleting rsyncd.conf")
-    # return shell("kubectl exec {} -- rm /etc/rsyncd.conf".format(pod))
-
-
 def parse_path(path):
     pos = path.find(":")
     if pos == -1:
@@ -95,6 +102,10 @@ def copy(src, dest):
     src_host = args.source_host
     dest_host, dest_path = parse_path(dest)
     src_paths = []
+
+    kubectl_context_arg = " --context=" + args.context if args.context else ""
+    rsyncopts = args.rsyncopts if args.rsyncopts else '-Rza'
+
     for f in src:
         h, p = parse_path(f)
         if src_host == None:
@@ -116,10 +127,12 @@ def copy(src, dest):
             raise BaseException("Source and destination cannot be remote")
         destination = dest_path
     setup_remote(pod)
-    print(shell("rsync --blocking-io -Rza " + args.rsyncopts + " -e 'kubectl exec -i " +
-                pod + "' " + source + " " + destination, sh=False).strip())
-    cleanup_remote(pod)
+    #print("rsync --blocking-io " + rsyncopts + " -e 'kubectl " + kubectl_context_arg + " exec -i " +
+    #            pod + "' " + source + " " + destination)
+    unpiped_shell("rsync --blocking-io " + args.rsyncopts + " -e 'kubectl " + kubectl_context_arg + " exec -i " +
+                pod + "' " + source + " " + destination, sh=False)
     return
 
 debug(args)
+print(args.source, args.dest[0])
 copy(args.source, args.dest[0])
